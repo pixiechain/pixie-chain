@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1632,7 +1633,53 @@ func (s *PublicTransactionPoolAPI) SendRawTransaction(ctx context.Context, encod
 	if err := rlp.DecodeBytes(encodedTx, tx); err != nil {
 		return common.Hash{}, err
 	}
+	if err := metaTransactionCheck(ctx, tx, s.b); err != nil {
+		return common.Hash{}, err
+	}
 	return SubmitTransaction(ctx, s.b, tx)
+}
+
+/**
+check tx meta transaction format.
+*/
+func metaTransactionCheck(ctx context.Context, tx *types.Transaction, b Backend) error {
+	if types.IsMetaTransaction(tx.Data()) {
+		metaData, err := types.DecodeMetaData(tx.Data(), b.CurrentBlock().Number())
+		if err != nil {
+			return err
+		}
+
+		signer := types.MakeSigner(b.ChainConfig(), b.CurrentBlock().Number())
+		from, err := signer.Sender(tx)
+		if err != nil {
+			return err
+		}
+
+		addr, err := metaData.ParseMetaData(tx.Nonce(), tx.GasPrice(), tx.Gas(), tx.To(), tx.Value(), metaData.Payload, from, b.ChainConfig().ChainID)
+		if err != nil {
+			return err
+		}
+		if err := metaFeecheck(ctx, tx, metaData, addr, b); err != nil {
+			return err
+		}
+		log.Debug("metaTransfer found, feeaddr:", addr.Hex()+" feePercent : "+strconv.FormatUint(metaData.FeePercent, 10))
+	}
+	return nil
+}
+
+func metaFeecheck(ctx context.Context, tx *types.Transaction, metaData *types.MetaData, feeAddr common.Address, b Backend) error {
+	mgval := new(big.Int).Mul(new(big.Int).SetUint64(tx.Gas()), tx.GasPrice())
+	mgFeeAddrVal := new(big.Int).Div(new(big.Int).Mul(mgval, new(big.Int).SetUint64(metaData.FeePercent)), types.BIG10000) //value will deduct from fee address
+	state, _, err := b.StateAndHeaderByNumber(ctx, rpc.BlockNumber(b.CurrentBlock().Number().Int64()))
+	if state == nil || err != nil {
+		return err
+	}
+	feeAddrBalance := state.GetBalance(feeAddr)
+
+	if feeAddrBalance.Cmp(mgFeeAddrVal) < 0 {
+		return core.ErrInsufficientMetaFunds
+	}
+	return nil
 }
 
 // Sign calculates an ECDSA signature for:
@@ -1896,6 +1943,27 @@ func (api *PrivateDebugAPI) ChaindbCompact() error {
 		}
 	}
 	return nil
+}
+
+//TODO warning delete this when online
+func (api *PrivateDebugAPI) GetPoolNonce(ctx context.Context, address string) (*hexutil.Uint64, error) {
+	nonce, err := api.b.GetPoolNonce(ctx, common.HexToAddress(address))
+	return (*hexutil.Uint64)(&nonce), err
+}
+
+//TODO warning delete this when online
+func (api *PrivateDebugAPI) SendTransactions(ctx context.Context, signedTxs []*types.Transaction) ([]string, error) {
+	var txsHash = make([]string, len(signedTxs))
+	if len(signedTxs) == 0 {
+		return txsHash, fmt.Errorf("no txs received")
+	}
+	for _, tx := range signedTxs {
+		err := api.b.SendTx(ctx, tx)
+		if err != nil {
+			log.Error("batch send error", "err", err)
+		}
+	}
+	return txsHash, nil
 }
 
 // SetHead rewinds the head of the blockchain to a previous block.
