@@ -27,7 +27,6 @@ import (
 	mapset "github.com/deckarep/golang-set"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
-	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -129,6 +128,10 @@ type worker struct {
 	eth         Backend
 	chain       *core.BlockChain
 
+	posa        consensus.PoSA
+	// Check if the engine is a PoSA engine
+	isPoSA      bool
+
 	// Feeds
 	pendingLogsFeed event.Feed
 
@@ -188,10 +191,13 @@ type worker struct {
 }
 
 func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus.Engine, eth Backend, mux *event.TypeMux, isLocalBlock func(*types.Block) bool, init bool) *worker {
+	posa, isPoSA := engine.(consensus.PoSA)
 	worker := &worker{
 		config:             config,
 		chainConfig:        chainConfig,
 		engine:             engine,
+		isPoSA:             isPoSA,
+		posa:               posa,
 		eth:                eth,
 		mux:                mux,
 		chain:              eth.BlockChain(),
@@ -905,8 +911,11 @@ func (w *worker) commitNewWork(interrupt *int32, noempty bool, timestamp int64) 
 	}
 	// Create the current work task and check any fork transitions needed
 	env := w.current
-	if w.chainConfig.DAOForkSupport && w.chainConfig.DAOForkBlock != nil && w.chainConfig.DAOForkBlock.Cmp(header.Number) == 0 {
-		misc.ApplyDAOHardFork(env.state)
+	if w.isPoSA {
+		if err := w.posa.PreHandle(w.chain, header, env.state); err != nil {
+			log.Error("Failed to apply system contract upgrade", "err", err)
+			return
+		}
 	}
 	// Accumulate the uncles for the current block
 	uncles := make([]*types.Header, 0, 2)

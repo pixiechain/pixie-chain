@@ -32,6 +32,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/congress/sysc"
 	"github.com/ethereum/go-ethereum/consensus/misc"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -590,6 +591,11 @@ func (c *Congress) Finalize(chain consensus.ChainHeaderReader, header *types.Hea
 		}
 	}
 
+	// TODO: Do something in wormhole hard fork
+	if chain.Config().IsWormhole(header.Number) {
+		log.Info("You are in Wormhole hard fork now.", "number", header.Number)
+	}
+
 	// No block rewards in PoA, so the state remains as is and uncles are dropped
 	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
 	header.UncleHash = types.CalcUncleHash(nil)
@@ -624,6 +630,11 @@ func (c *Congress) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header
 		if _, err := c.doSomethingAtEpoch(chain, header, state); err != nil {
 			panic(err)
 		}
+	}
+
+	// TODO: Do something in wormhole hard fork
+	if chain.Config().IsWormhole(header.Number) {
+		log.Info("You are in Wormhole hard fork now.", "number", header.Number)
 	}
 
 	// No block rewards in PoA, so the state remains as is and uncles are dropped
@@ -1022,4 +1033,11 @@ func encodeSigHeader(w io.Writer, header *types.Header) {
 	if err != nil {
 		panic("can't encode: " + err.Error())
 	}
+}
+
+func (c *Congress) PreHandle(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB) error {
+	if c.chainConfig.WormholeBlock != nil && c.chainConfig.WormholeBlock.Cmp(header.Number) == 0 {
+		return sysc.UpgradeSystemContracts(state, header, newChainContext(chain, c), c.chainConfig)
+	}
+	return nil
 }

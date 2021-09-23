@@ -133,3 +133,14 @@ type PoW interface {
 	// Hashrate returns the current mining hashrate of a PoW consensus engine.
 	Hashrate() float64
 }
+
+// PoSA is a consensus engine based on proof-of-stake-authority.
+type PoSA interface {
+	Engine
+
+	// PreHandle runs any pre-transaction state modifications (e.g. apply hard fork rules).
+	//
+	// Note: The block header and state database might be updated to reflect any
+	// consensus rules that happen at pre-handling.
+	PreHandle(chain ChainHeaderReader, header *types.Header, state *state.StateDB) error
+}
