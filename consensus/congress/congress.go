@@ -20,6 +20,7 @@ package congress
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"math"
 	"math/big"
@@ -53,6 +54,9 @@ const (
 	inmemorySignatures = 4096 // Number of recent block signatures to keep in memory
 
 	wiggleTime    = 500 * time.Millisecond // Random delay (per validator) to allow concurrent validators
+
+	maxGasLimit = uint64(0x7fffffffffffffff) // Max gas limit (2^63-1)
+
 	maxValidators = 21                     // Max validators allowed to seal.
 )
 
@@ -316,6 +320,10 @@ func (c *Congress) verifyHeader(chain consensus.ChainHeaderReader, header *types
 	// Ensure that the block's difficulty is meaningful (may not be correct at this point)
 	if number > 0 && header.Difficulty == nil {
 		return errInvalidDifficulty
+	}
+	// Verify that the gas limit is <= 2^63-1
+	if header.GasLimit > maxGasLimit {
+		return fmt.Errorf("invalid gasLimit: have %v, max %v", header.GasLimit, maxGasLimit)
 	}
 	// If all checks passed, validate any special fields for hard forks
 	if err := misc.VerifyForkHashes(chain.Config(), header, false); err != nil {
